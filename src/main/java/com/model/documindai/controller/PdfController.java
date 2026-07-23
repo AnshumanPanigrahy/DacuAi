@@ -1,7 +1,9 @@
 package com.model.documindai.controller;
 
+import com.model.documindai.entity.Document;
 import com.model.documindai.service.SearchService;
 import com.model.documindai.service.TextChunkService;
+import com.model.documindai.service.DocumentService;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
@@ -17,12 +19,14 @@ public class PdfController {
 
     private final TextChunkService textChunkService;
     private final SearchService searchService;
+    private final DocumentService documentService;
 
     public PdfController(TextChunkService textChunkService,
-                         SearchService searchService) {
+                         SearchService searchService, DocumentService documentService) {
 
         this.textChunkService = textChunkService;
         this.searchService = searchService;
+        this.documentService = documentService;
     }
 
     @PostMapping("/upload")
@@ -41,8 +45,10 @@ public class PdfController {
             List<String> chunks =
                     textChunkService.splitText(text, 500);
 
+            Document savedDocument =
+                    documentService.saveDocument(file.getOriginalFilename());
+            documentService.saveChunks(savedDocument, chunks);
             searchService.saveChunks(chunks);
-
             return chunks;
 
         } catch (IOException e) {
