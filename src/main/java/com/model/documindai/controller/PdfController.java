@@ -1,7 +1,9 @@
 package com.model.documindai.controller;
 
+import com.model.documindai.entity.Document;
 import com.model.documindai.service.SearchService;
 import com.model.documindai.service.TextChunkService;
+import com.model.documindai.service.DocumentService;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
@@ -10,6 +12,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/pdf")
@@ -17,12 +20,14 @@ public class PdfController {
 
     private final TextChunkService textChunkService;
     private final SearchService searchService;
+    private final DocumentService documentService;
 
     public PdfController(TextChunkService textChunkService,
-                         SearchService searchService) {
+                         SearchService searchService, DocumentService documentService) {
 
         this.textChunkService = textChunkService;
         this.searchService = searchService;
+        this.documentService = documentService;
     }
 
     @PostMapping("/upload")
@@ -41,8 +46,9 @@ public class PdfController {
             List<String> chunks =
                     textChunkService.splitText(text, 500);
 
-            searchService.saveChunks(chunks);
-
+            Document savedDocument =
+                    documentService.saveDocument(file.getOriginalFilename());
+            documentService.saveChunks(savedDocument, chunks);
             return chunks;
 
         } catch (IOException e) {
@@ -53,7 +59,34 @@ public class PdfController {
 
     @GetMapping("/search")
     public List<String> search(@RequestParam String keyword) {
+        return searchService.search(keyword);
+    }
 
-        return searchService.semanticSearch(keyword);
+    @GetMapping("/documents")
+    public List<Document> getAllDocuments() {
+
+        return documentService.getAllDocuments();
+
+    }
+
+    @GetMapping("/document/{id}")
+    public Document getDocumentById(@PathVariable Long id) {
+
+        return documentService.getDocumentById(id);
+
+    }
+
+    @GetMapping("/statistics")
+    public Map<String, Long> getStatistics() {
+
+        return documentService.getStatistics();
+    }
+
+    @DeleteMapping("/document/{id}")
+    public String deleteDocument(@PathVariable Long id) {
+
+        documentService.deleteDocument(id);
+
+        return "Document deleted successfully.";
     }
 }
