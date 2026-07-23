@@ -7,6 +7,8 @@ import java.util.Optional;
 import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 
 @Service
 public class DocumentService {
@@ -20,7 +22,6 @@ public class DocumentService {
         this.documentChunkRepository = documentChunkRepository;
     }
 
-    // Save document details
     public Document saveDocument(String fileName) {
 
         Optional<Document> existingDocument =
@@ -59,5 +60,34 @@ public class DocumentService {
 
             documentChunkRepository.save(documentChunk);
         }
+    }
+
+    public List<Document> getAllDocuments() {
+        return documentRepository.findAll();
+    }
+
+    public Document getDocumentById(Long id) {
+
+        return documentRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Document not found"));
+
+    }
+
+    public void deleteDocument(Long id) {
+
+        Document document = documentRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Document not found"));
+
+        documentRepository.delete(document);
+    }
+
+    public Map<String, Long> getStatistics() {
+
+        Map<String, Long> statistics = new HashMap<>();
+
+        statistics.put("totalDocuments", documentRepository.count());
+        statistics.put("totalChunks", documentChunkRepository.count());
+
+        return statistics;
     }
 }

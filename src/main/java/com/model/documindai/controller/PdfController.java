@@ -12,6 +12,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/pdf")
@@ -48,7 +49,6 @@ public class PdfController {
             Document savedDocument =
                     documentService.saveDocument(file.getOriginalFilename());
             documentService.saveChunks(savedDocument, chunks);
-            searchService.saveChunks(chunks);
             return chunks;
 
         } catch (IOException e) {
@@ -59,7 +59,34 @@ public class PdfController {
 
     @GetMapping("/search")
     public List<String> search(@RequestParam String keyword) {
+        return searchService.search(keyword);
+    }
 
-        return searchService.semanticSearch(keyword);
+    @GetMapping("/documents")
+    public List<Document> getAllDocuments() {
+
+        return documentService.getAllDocuments();
+
+    }
+
+    @GetMapping("/document/{id}")
+    public Document getDocumentById(@PathVariable Long id) {
+
+        return documentService.getDocumentById(id);
+
+    }
+
+    @GetMapping("/statistics")
+    public Map<String, Long> getStatistics() {
+
+        return documentService.getStatistics();
+    }
+
+    @DeleteMapping("/document/{id}")
+    public String deleteDocument(@PathVariable Long id) {
+
+        documentService.deleteDocument(id);
+
+        return "Document deleted successfully.";
     }
 }
