@@ -1,5 +1,5 @@
 package com.model.documindai.controller;
-
+import com.model.documindai.model.SearchResult;
 import com.model.documindai.entity.Document;
 import com.model.documindai.service.SearchService;
 import com.model.documindai.service.TextChunkService;
@@ -21,6 +21,7 @@ public class PdfController {
     private final TextChunkService textChunkService;
     private final SearchService searchService;
     private final DocumentService documentService;
+
 
     public PdfController(TextChunkService textChunkService,
                          SearchService searchService, DocumentService documentService) {
@@ -58,8 +59,8 @@ public class PdfController {
     }
 
     @GetMapping("/search")
-    public List<String> search(@RequestParam String keyword) {
-        return searchService.search(keyword);
+    public List<SearchResult> search(@RequestParam String query) {
+        return searchService.search(query);
     }
 
     @GetMapping("/documents")

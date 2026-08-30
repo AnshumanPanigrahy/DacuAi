@@ -1,24 +1,22 @@
 package com.model.documindai.service;
 
+import dev.langchain4j.model.embedding.EmbeddingModel;
+import dev.langchain4j.data.embedding.Embedding;
 import org.springframework.stereotype.Service;
 
 @Service
 public class EmbeddingService {
 
-    public double[] generateEmbedding(String text) {
+    private final EmbeddingModel embeddingModel;
 
-        double[] vector = new double[5];
+    public EmbeddingService(EmbeddingModel embeddingModel) {
+        this.embeddingModel = embeddingModel;
+    }
 
-        vector[0] = text.length();
+    public float[] generateEmbedding(String text) {
 
-        vector[1] = text.split("\\s+").length;
+        Embedding embedding = embeddingModel.embed(text).content();
 
-        vector[2] = text.chars().filter(Character::isUpperCase).count();
-
-        vector[3] = text.chars().filter(Character::isDigit).count();
-
-        vector[4] = text.chars().filter(Character::isLetter).count();
-
-        return vector;
+        return embedding.vector();
     }
 }
