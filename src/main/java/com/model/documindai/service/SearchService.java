@@ -24,6 +24,10 @@ public class SearchService {
     private final EmbeddingStore<TextSegment> embeddingStore;
     private final DocumentChunkRepository documentChunkRepository;
 
+    private static final double SIMILARITY_THRESHOLD = 0.80;
+    private static final int CANDIDATE_COUNT = 10;
+    private static final int FINAL_RESULT_COUNT = 5;
+
     public SearchService(
             EmbeddingModel embeddingModel,
             EmbeddingStore<TextSegment> embeddingStore,
@@ -36,27 +40,27 @@ public class SearchService {
 
     public List<SearchResult> search(String query) {
 
-        // 1. Convert question into an embedding
+        // 1. Convert question into embedding
         Embedding queryEmbedding =
                 embeddingModel.embed(query).content();
 
-        // 2. Retrieve candidate chunks
+        // 2. Retrieve more candidates
         EmbeddingSearchRequest request =
                 EmbeddingSearchRequest.builder()
                         .queryEmbedding(queryEmbedding)
-                        .maxResults(10)
+                        .maxResults(CANDIDATE_COUNT)
                         .build();
 
         List<EmbeddingMatch<TextSegment>> matches =
                 embeddingStore.search(request).matches();
 
-        // 3. Convert vector matches to SearchResult
+
         List<SearchResult> semanticResults = new ArrayList<>();
 
         for (EmbeddingMatch<TextSegment> match : matches) {
 
-            // Ignore weak matches
-            if (match.score() < 0.80) {
+            // Remove weak semantic matches
+            if (match.score() < SIMILARITY_THRESHOLD) {
                 continue;
             }
 
@@ -82,43 +86,46 @@ public class SearchService {
             );
         }
 
-        // Strongest result first
+
         semanticResults.sort(
                 Comparator.comparingDouble(
                         SearchResult::getScore
                 ).reversed()
         );
 
-        // Keep the strongest semantic matches
-        List<SearchResult> topResults =
-                semanticResults.stream()
-                        .limit(5)
-                        .toList();
-
-        if (topResults.isEmpty()) {
+        if (semanticResults.isEmpty()) {
             return List.of();
         }
 
-        // 4. Group nearby chunks
-        return buildRelevantContext(topResults);
+
+        List<SearchResult> contextualResults =
+                buildRelevantContext(semanticResults);
+
+
+        List<SearchResult> finalResults =
+                removeDuplicates(contextualResults);
+
+
+        return finalResults.stream()
+                .limit(FINAL_RESULT_COUNT)
+                .toList();
     }
 
     private List<SearchResult> buildRelevantContext(
-            List<SearchResult> topResults) {
+            List<SearchResult> semanticResults) {
 
-        if (topResults.isEmpty()) {
-            return List.of();
-        }
-
-        // Strongest semantic result
-        SearchResult strongest = topResults.get(0);
+        SearchResult strongest =
+                semanticResults.get(0);
 
         try {
+
             Long documentId =
                     Long.parseLong(strongest.getDocumentId());
 
             int center =
-                    Integer.parseInt(strongest.getChunkNumber());
+                    Integer.parseInt(
+                            strongest.getChunkNumber()
+                    );
 
             List<DocumentChunk> region =
                     documentChunkRepository
@@ -133,20 +140,14 @@ public class SearchService {
 
             for (DocumentChunk chunk : region) {
 
-                double score = 0.0;
+                double score =
+                        findOriginalScore(
+                                semanticResults,
+                                chunk
+                        );
 
-                /*
-                 * If this chunk was directly returned
-                 * by vector search, preserve its real score.
-                 */
-                for (SearchResult result : topResults) {
-
-                    if (result.getChunkId()
-                            .equals(String.valueOf(chunk.getId()))) {
-
-                        score = result.getScore();
-                        break;
-                    }
+                if (score == 0.0) {
+                    score = strongest.getScore() * 0.95;
                 }
 
                 finalResults.add(
@@ -154,11 +155,21 @@ public class SearchService {
                                 score,
                                 String.valueOf(documentId),
                                 String.valueOf(chunk.getId()),
-                                String.valueOf(chunk.getChunkNumber()),
+                                String.valueOf(
+                                        chunk.getChunkNumber()
+                                ),
                                 chunk.getChunkText()
                         )
                 );
             }
+
+            finalResults.sort(
+                    Comparator.comparingInt(
+                            result -> Integer.parseInt(
+                                    result.getChunkNumber()
+                            )
+                    )
+            );
 
             return finalResults;
 
@@ -168,7 +179,47 @@ public class SearchService {
                     "Invalid document/chunk metadata"
             );
 
-            return topResults;
+            return semanticResults.stream()
+                    .limit(FINAL_RESULT_COUNT)
+                    .toList();
         }
+    }
+
+    private double findOriginalScore(
+            List<SearchResult> semanticResults,
+            DocumentChunk chunk) {
+
+        for (SearchResult result : semanticResults) {
+
+            if (result.getChunkId()
+                    .equals(String.valueOf(chunk.getId()))) {
+
+                return result.getScore();
+            }
+        }
+
+        return 0.0;
+    }
+
+    private List<SearchResult> removeDuplicates(
+            List<SearchResult> results) {
+
+        List<SearchResult> uniqueResults =
+                new ArrayList<>();
+
+        for (SearchResult result : results) {
+
+            boolean duplicate = uniqueResults.stream()
+                    .anyMatch(existing ->
+                            existing.getChunkId()
+                                    .equals(result.getChunkId())
+                    );
+
+            if (!duplicate) {
+                uniqueResults.add(result);
+            }
+        }
+
+        return uniqueResults;
     }
 }

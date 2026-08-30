@@ -31,11 +31,9 @@ public class RagService {
             Consumer<Throwable> onError,
             Runnable onComplete) {
 
-        // 1. Retrieve relevant chunks
         List<SearchResult> results =
                 searchService.search(question);
 
-        // 2. No relevant documents found
         if (results.isEmpty()) {
 
             onToken.accept(
@@ -49,7 +47,19 @@ public class RagService {
             return;
         }
 
-        // 3. Build context from multiple chunks
+
+        List<SourceResult> sources = results.stream()
+                .map(result -> new SourceResult(
+                        result.getDocumentId(),
+                        result.getChunkId(),
+                        result.getChunkNumber()
+                ))
+                .toList();
+
+
+        onSources.accept(sources);
+
+
         StringBuilder context =
                 new StringBuilder();
 
@@ -68,17 +78,17 @@ public class RagService {
                     .append("\n\n---\n\n");
         }
 
-        System.out.println(
+        System.out.print(
                 "Context characters: "
                         + context.length()
         );
 
-        System.out.println(
+        System.out.print(
                 "Chunks sent to Gemini: "
                         + results.size()
         );
 
-        // 4. Build RAG prompt
+
         String prompt = """
                 You are DocuMind AI, a document question-answering assistant.
 
@@ -105,7 +115,6 @@ public class RagService {
                 question
         );
 
-        // 5. Stream Gemini response
         streamingChatModel.chat(
                 prompt,
                 new StreamingChatResponseHandler() {
@@ -114,26 +123,13 @@ public class RagService {
                     public void onPartialResponse(
                             String partialResponse) {
 
-                        onToken.accept(
-                                partialResponse
-                        );
+                        onToken.accept(partialResponse);
                     }
 
                     @Override
                     public void onCompleteResponse(
                             ChatResponse completeResponse) {
 
-                        List<SourceResult> sources = results.stream()
-                                .map(result -> new SourceResult(
-                                        result.getDocumentId(),
-                                        result.getChunkId(),
-                                        result.getChunkNumber()
-                                ))
-                                .toList();
-
-                        onSources.accept(sources);
-
-                        // Finish SSE connection
                         onComplete.run();
                     }
 
