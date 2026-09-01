@@ -201,6 +201,7 @@ public class SearchService {
         return 0.0;
     }
 
+
     private List<SearchResult> removeDuplicates(
             List<SearchResult> results) {
 
