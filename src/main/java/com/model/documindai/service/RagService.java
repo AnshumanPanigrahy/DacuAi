@@ -1,5 +1,6 @@
 package com.model.documindai.service;
 
+import com.model.documindai.model.ContextEvaluationResult;
 import com.model.documindai.model.SearchResult;
 import com.model.documindai.model.SourceResult;
 import dev.langchain4j.model.chat.StreamingChatModel;
@@ -15,13 +16,16 @@ public class RagService {
 
     private final SearchService searchService;
     private final StreamingChatModel streamingChatModel;
+    private final ContextEvaluator contextEvaluator;
 
     public RagService(
             SearchService searchService,
-            StreamingChatModel streamingChatModel) {
+            StreamingChatModel streamingChatModel,
+            ContextEvaluator contextEvaluator) {
 
         this.searchService = searchService;
         this.streamingChatModel = streamingChatModel;
+        this.contextEvaluator = contextEvaluator;
     }
 
     public void streamAnswer(
@@ -33,6 +37,27 @@ public class RagService {
 
         List<SearchResult> results =
                 searchService.search(question);
+
+        ContextEvaluationResult evaluation =
+                contextEvaluator.evaluate(
+                        question,
+                        results
+                );
+
+        System.out.println(
+                "Context sufficient: "
+                        + evaluation.isSufficient()
+        );
+
+        System.out.println(
+                "Context score: "
+                        + evaluation.getScore()
+        );
+
+        System.out.println(
+                "Context reason: "
+                        + evaluation.getReason()
+        );
 
         if (results.isEmpty()) {
 
