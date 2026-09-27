@@ -7,9 +7,10 @@ import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
 import org.springframework.stereotype.Service;
-
 import java.util.List;
 import java.util.function.Consumer;
+import com.model.documindai.model.WebSearchResult;
+import com.model.documindai.model.WebSearchResponse;
 
 @Service
 public class RagService {
@@ -17,15 +18,19 @@ public class RagService {
     private final SearchService searchService;
     private final StreamingChatModel streamingChatModel;
     private final ContextEvaluator contextEvaluator;
+    private final WebSearchService webSearchService;
+    private final WebResultEvaluator webResultEvaluator;
 
     public RagService(
             SearchService searchService,
             StreamingChatModel streamingChatModel,
-            ContextEvaluator contextEvaluator) {
+            ContextEvaluator contextEvaluator, WebSearchService webSearchService, WebResultEvaluator webResultEvaluator) {
 
         this.searchService = searchService;
         this.streamingChatModel = streamingChatModel;
         this.contextEvaluator = contextEvaluator;
+        this.webSearchService = webSearchService;
+        this.webResultEvaluator = webResultEvaluator;
     }
 
     public void streamAnswer(
@@ -43,6 +48,28 @@ public class RagService {
                         question,
                         results
                 );
+        List<WebSearchResult> webResults =
+                List.of();
+
+        if (!evaluation.isSufficient()) {
+
+            System.out.println(
+                    "PDF context insufficient. Searching web..."
+            );
+
+            WebSearchResponse webResponse =
+                    webSearchService.search(question);
+
+            webResults =
+                    webResultEvaluator.filter(
+                            webResponse.getResults()
+                    );
+
+            System.out.println(
+                    "Filtered web results: "
+                            + webResults.size()
+            );
+        }
 
         System.out.println(
                 "Context sufficient: "

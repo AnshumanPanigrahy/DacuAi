@@ -12,4 +12,5 @@ public class SearchResult {
     private String chunkId;
     private String chunkNumber;
     private String text;
+    private String retrievalType;
 }
