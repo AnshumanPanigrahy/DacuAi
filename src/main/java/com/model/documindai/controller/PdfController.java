@@ -1,7 +1,7 @@
 package com.model.documindai.controller;
 
-import com.model.documindai.model.SearchResult;
 import com.model.documindai.model.DocumentResponse;
+import com.model.documindai.model.SearchResult;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import com.model.documindai.entity.Document;
