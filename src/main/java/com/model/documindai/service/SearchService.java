@@ -16,6 +16,8 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import dev.langchain4j.store.embedding.filter.Filter;
+import dev.langchain4j.store.embedding.filter.MetadataFilterBuilder;
 
 @Service
 public class SearchService {
@@ -24,8 +26,8 @@ public class SearchService {
     private final EmbeddingStore<TextSegment> embeddingStore;
     private final DocumentChunkRepository documentChunkRepository;
 
-    private static final double SIMILARITY_THRESHOLD = 0.80;
-    private static final int CANDIDATE_COUNT = 10;
+    private static final double SIMILARITY_THRESHOLD = 0.60;
+    private static final int CANDIDATE_COUNT = 100;
     private static final int CONTEXT_RADIUS = 2;
     private static final int FINAL_RESULT_COUNT = 5;
 
@@ -117,14 +119,18 @@ public class SearchService {
     private List<SearchResult> buildRelevantContext(
             List<SearchResult> semanticResults) {
 
-        List<SearchResult> finalResults =
-                new ArrayList<>();
+        List<SearchResult> finalResults = new ArrayList<>();
 
         /*
-         * Use every strong semantic result as a possible
-         * context center.
+         * Only expand context around the strongest semantic results.
+         * This prevents weak matches from filling the final result list.
          */
-        for (SearchResult semanticResult : semanticResults) {
+        int semanticLimit = Math.min(3, semanticResults.size());
+
+        for (int i = 0; i < semanticLimit; i++) {
+
+            SearchResult semanticResult =
+                    semanticResults.get(i);
 
             try {
 
@@ -184,21 +190,6 @@ public class SearchService {
             }
         }
 
-        /*
-         * Arrange chunks in document order.
-         */
-        finalResults.sort(
-                Comparator
-                        .comparing(
-                                SearchResult::getDocumentId
-                        )
-                        .thenComparingInt(
-                                result -> Integer.parseInt(
-                                        result.getChunkNumber()
-                                )
-                        )
-        );
-
         return finalResults;
     }
 
@@ -241,5 +232,74 @@ public class SearchService {
         }
 
         return uniqueResults;
+    }
+    public List<SearchResult> searchByDocument(
+            String query,
+            Long documentId) {
+
+        Embedding queryEmbedding =
+                embeddingModel.embed(query).content();
+
+        Filter documentFilter =
+                MetadataFilterBuilder
+                        .metadataKey("documentId")
+                        .isEqualTo(documentId);
+
+        EmbeddingSearchRequest request =
+                EmbeddingSearchRequest.builder()
+                        .queryEmbedding(queryEmbedding)
+                        .filter(documentFilter)
+                        .maxResults(CANDIDATE_COUNT)
+                        .build();
+
+        List<EmbeddingMatch<TextSegment>> matches =
+                embeddingStore.search(request).matches();
+
+        List<SearchResult> semanticResults =
+                new ArrayList<>();
+
+        for (EmbeddingMatch<TextSegment> match : matches) {
+
+            if (match.score() < SIMILARITY_THRESHOLD) {
+                continue;
+            }
+
+            TextSegment segment = match.embedded();
+
+            String chunkId =
+                    segment.metadata().getString("chunkId");
+
+            String chunkNumber =
+                    segment.metadata().getString("chunkNumber");
+
+            semanticResults.add(
+                    new SearchResult(
+                            match.score(),
+                            String.valueOf(documentId),
+                            chunkId,
+                            chunkNumber,
+                            segment.text(),
+                            "SEMANTIC"
+                    )
+            );
+        }
+
+        semanticResults.sort(
+                Comparator.comparingDouble(
+                        SearchResult::getScore
+                ).reversed()
+        );
+
+        if (semanticResults.isEmpty()) {
+            return List.of();
+        }
+
+        List<SearchResult> contextualResults =
+                buildRelevantContext(semanticResults);
+
+        return removeDuplicates(contextualResults)
+                .stream()
+                .limit(FINAL_RESULT_COUNT)
+                .toList();
     }
 }
