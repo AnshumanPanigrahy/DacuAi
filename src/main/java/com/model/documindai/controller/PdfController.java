@@ -1,26 +1,32 @@
 package com.model.documindai.controller;
 
 import com.model.documindai.model.DocumentResponse;
+import com.model.documindai.model.ExtractedPage;
+import com.model.documindai.model.PageAwareChunk;
 import com.model.documindai.model.SearchResult;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import com.model.documindai.entity.Document;
 import com.model.documindai.service.DocumentService;
+import com.model.documindai.service.GeminiVisionOcrService;
 import com.model.documindai.service.PdfOcrService;
 import com.model.documindai.service.SearchService;
 import com.model.documindai.service.TextChunkService;
-
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
-
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import com.model.documindai.service.GeminiVisionOcrService;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/pdf")
@@ -54,19 +60,18 @@ public class PdfController {
 
             byte[] pdfBytes = file.getBytes();
 
-            String text;
-
             /*
              * First try normal PDF text extraction.
              */
-            try (PDDocument document =
-                         Loader.loadPDF(pdfBytes)) {
+            List<ExtractedPage> pages =
+                    extractPages(pdfBytes);
 
-                PDFTextStripper stripper =
-                        new PDFTextStripper();
+            String text = pages.stream()
+                    .map(ExtractedPage::text)
+                    .filter(pageText -> pageText != null)
+                    .collect(Collectors.joining());
 
-                text = stripper.getText(document);
-            }
+            List<String> chunks;
 
             /*
              * If PDFBox could not extract enough text,
@@ -95,14 +100,25 @@ public class PdfController {
                             "Gemini document extraction successful."
                     );
 
+                    chunks = textChunkService.splitText(
+                            text,
+                            500
+                    );
+
                 } catch (Exception e) {
 
                     e.printStackTrace();
 
-                    text =
-                            pdfOcrService.extractText(
-                                    pdfBytes
-                            );
+                    List<ExtractedPage> ocrPages =
+                            pdfOcrService.extractPages(pdfBytes);
+
+                    chunks = textChunkService.splitPages(
+                                    ocrPages,
+                                    500
+                            )
+                            .stream()
+                            .map(PageAwareChunk::text)
+                            .toList();
                 }
 
             } else {
@@ -110,16 +126,15 @@ public class PdfController {
                 System.out.println(
                         "Text detected. Using normal PDF extraction."
                 );
-            }
 
-            /*
-             * Convert extracted/OCR text into chunks.
-             */ 
-            List<String> chunks =
-                    textChunkService.splitText(
-                            text,
-                            500
-                    );
+                chunks = textChunkService.splitPages(
+                                pages,
+                                500
+                        )
+                        .stream()
+                        .map(PageAwareChunk::text)
+                        .toList();
+            }
 
             if (chunks.isEmpty()) {
 
@@ -153,6 +168,28 @@ public class PdfController {
                     "Failed to process PDF.",
                     e
             );
+        }
+    }
+
+    private List<ExtractedPage> extractPages(byte[] pdfBytes)
+            throws IOException {
+
+        try (PDDocument document = Loader.loadPDF(pdfBytes)) {
+            PDFTextStripper stripper = new PDFTextStripper();
+            List<ExtractedPage> pages = new ArrayList<>();
+
+            for (int pageNumber = 1;
+                 pageNumber <= document.getNumberOfPages();
+                 pageNumber++) {
+                stripper.setStartPage(pageNumber);
+                stripper.setEndPage(pageNumber);
+                pages.add(new ExtractedPage(
+                        pageNumber,
+                        stripper.getText(document)
+                ));
+            }
+
+            return pages;
         }
     }
 

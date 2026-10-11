@@ -1,9 +1,13 @@
 package com.model.documindai.service;
 
+import com.model.documindai.model.ExtractedPage;
+import com.model.documindai.model.PageAwareChunk;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 @Service
 public class TextChunkService {
@@ -77,6 +81,83 @@ public class TextChunkService {
         // Add final chunk
         if (!currentChunk.isEmpty()) {
             chunks.add(currentChunk.toString().trim());
+        }
+
+        return chunks;
+    }
+
+    public List<PageAwareChunk> splitPages(
+            List<ExtractedPage> pages,
+            int chunkSize) {
+
+        List<PageAwareChunk> chunks = new ArrayList<>();
+        StringBuilder currentChunk = new StringBuilder();
+        Set<Integer> currentPageNumbers = new LinkedHashSet<>();
+
+        for (ExtractedPage page : pages) {
+            if (page.text() == null || page.text().isBlank()) {
+                continue;
+            }
+
+            String cleanedText = page.text()
+                    .replace("\u0000", "")
+                    .replaceAll("[\\p{Cntrl}&&[^\r\n\t]]", "")
+                    .replaceAll("[ \t]+", " ")
+                    .replaceAll("\\r\\n", "\n")
+                    .replaceAll("\\r", "\n")
+                    .replaceAll("\n{3,}", "\n\n")
+                    .trim();
+
+            String[] paragraphs = cleanedText.split("\\n\\s*\\n");
+
+            for (String paragraph : paragraphs) {
+                paragraph = paragraph.trim();
+
+                if (paragraph.isEmpty()) {
+                    continue;
+                }
+
+                if (currentChunk.length() + paragraph.length() + 1 <= chunkSize) {
+                    if (!currentChunk.isEmpty()) {
+                        currentChunk.append("\n\n");
+                    }
+
+                    currentChunk.append(paragraph);
+                    currentPageNumbers.add(page.pageNumber());
+                } else {
+                    if (!currentChunk.isEmpty()) {
+                        chunks.add(new PageAwareChunk(
+                                new ArrayList<>(currentPageNumbers),
+                                currentChunk.toString().trim()
+                        ));
+                    }
+
+                    if (paragraph.length() > chunkSize) {
+                        for (String sentenceChunk :
+                                splitLargeParagraph(paragraph, chunkSize)) {
+                            chunks.add(new PageAwareChunk(
+                                    List.of(page.pageNumber()),
+                                    sentenceChunk
+                            ));
+                        }
+
+                        currentChunk.setLength(0);
+                        currentPageNumbers.clear();
+                    } else {
+                        currentChunk.setLength(0);
+                        currentPageNumbers.clear();
+                        currentChunk.append(paragraph);
+                        currentPageNumbers.add(page.pageNumber());
+                    }
+                }
+            }
+        }
+
+        if (!currentChunk.isEmpty()) {
+            chunks.add(new PageAwareChunk(
+                    new ArrayList<>(currentPageNumbers),
+                    currentChunk.toString().trim()
+            ));
         }
 
         return chunks;

@@ -1,5 +1,6 @@
 package com.model.documindai.service;
 
+import com.model.documindai.model.ExtractedPage;
 import net.sourceforge.tess4j.Tesseract;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -11,6 +12,9 @@ import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.awt.image.RescaleOp;
 import java.awt.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
 
 
 @Service
@@ -42,8 +46,18 @@ public class PdfOcrService {
 
     public String extractText(byte[] pdfBytes) {
 
-        StringBuilder extractedText =
-                new StringBuilder();
+        return extractPages(pdfBytes).stream()
+                .map(ExtractedPage::text)
+                .filter(pageText ->
+                        pageText != null && !pageText.isBlank())
+                .map(String::trim)
+                .collect(Collectors.joining("\n\n"));
+    }
+
+    public List<ExtractedPage> extractPages(byte[] pdfBytes) {
+
+        List<ExtractedPage> extractedPages =
+                new ArrayList<>();
 
         try (PDDocument document =
                      Loader.loadPDF(pdfBytes)) {
@@ -57,7 +71,6 @@ public class PdfOcrService {
             for (int page = 0;
                  page < totalPages;
                  page++) {
-
 
                 BufferedImage originalImage =
                         renderer.renderImageWithDPI(
@@ -77,13 +90,10 @@ public class PdfOcrService {
                 pageText =
                         ocrTextCleaner.clean(pageText);
 
-                if (pageText != null &&
-                        !pageText.isBlank()) {
-
-                    extractedText
-                            .append(pageText.trim())
-                            .append("\n\n");
-                }
+                extractedPages.add(new ExtractedPage(
+                        page + 1,
+                        pageText == null ? "" : pageText.trim()
+                ));
             }
 
         } catch (Exception e) {
@@ -94,9 +104,7 @@ public class PdfOcrService {
             );
         }
 
-        return extractedText
-                .toString()
-                .trim();
+        return extractedPages;
     }
 
     private BufferedImage preprocessImage(
