@@ -74,9 +74,7 @@ public class DocumentService {
                 continue;
             }
 
-            /*
-             * 1. Save the chunk in PostgreSQL
-             */
+            
             DocumentChunk documentChunk = new DocumentChunk();
 
             documentChunk.setChunkNumber(chunkNumber);
@@ -86,9 +84,7 @@ public class DocumentService {
             DocumentChunk savedChunk =
                     documentChunkRepository.save(documentChunk);
 
-            /*
-             * 2. Create metadata for the vector
-             */
+           
             Map<String, String> metadataMap = new HashMap<>();
 
             metadataMap.put(
@@ -108,21 +104,16 @@ public class DocumentService {
 
             Metadata metadata = Metadata.from(metadataMap);
 
-            /*
-             * 3. Create LangChain4j TextSegment
-             */
+           
             TextSegment textSegment =
                     TextSegment.from(cleanChunk, metadata);
 
-            /*
-             * 4. Generate real ML embedding
-             */
+            
             Embedding embedding =
                     embeddingModel.embed(textSegment).content();
 
-            /*
-             * 5. Store embedding in PostgreSQL + pgvector
-             */
+           5. Store embedding in PostgreSQL + pgvector
+             
             embeddingStore.add(
                     embedding,
                     textSegment

@@ -43,11 +43,11 @@ public class SearchService {
 
     public List<SearchResult> search(String query) {
 
-        // 1. Convert the question into an embedding
+        
         Embedding queryEmbedding =
                 embeddingModel.embed(query).content();
 
-        // 2. Search pgvector
+        
         EmbeddingSearchRequest request =
                 EmbeddingSearchRequest.builder()
                         .queryEmbedding(queryEmbedding)
@@ -57,13 +57,13 @@ public class SearchService {
         List<EmbeddingMatch<TextSegment>> matches =
                 embeddingStore.search(request).matches();
 
-        // 3. Convert semantic matches
+        
         List<SearchResult> semanticResults =
                 new ArrayList<>();
 
         for (EmbeddingMatch<TextSegment> match : matches) {
 
-            // Ignore weak semantic matches
+            
             if (match.score() < SIMILARITY_THRESHOLD) {
                 continue;
             }
@@ -91,7 +91,7 @@ public class SearchService {
             );
         }
 
-        // 4. Strongest semantic result first
+  
         semanticResults.sort(
                 Comparator.comparingDouble(
                         SearchResult::getScore
@@ -102,15 +102,13 @@ public class SearchService {
             return List.of();
         }
 
-        // 5. Add neighboring chunks for context
+        
         List<SearchResult> contextualResults =
                 buildRelevantContext(semanticResults);
 
-        // 6. Remove duplicate chunks
+        
         List<SearchResult> uniqueResults =
                 removeDuplicates(contextualResults);
-
-        // 7. Limit final context
         return uniqueResults.stream()
                 .limit(FINAL_RESULT_COUNT)
                 .toList();
@@ -121,10 +119,7 @@ public class SearchService {
 
         List<SearchResult> finalResults = new ArrayList<>();
 
-        /*
-         * Only expand context around the strongest semantic results.
-         * This prevents weak matches from filling the final result list.
-         */
+       
         int semanticLimit = Math.min(3, semanticResults.size());
 
         for (int i = 0; i < semanticLimit; i++) {

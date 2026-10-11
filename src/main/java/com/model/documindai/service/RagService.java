@@ -57,16 +57,11 @@ public class RagService {
             Consumer<Throwable> onError,
             Runnable onComplete) {
 
-        // --------------------------------------------------
-        // 1. Search uploaded PDF documents
-        // --------------------------------------------------
 
         List<SearchResult> results =
                 searchService.search(question);
 
-        // --------------------------------------------------
-        // 2. Evaluate PDF context
-        // --------------------------------------------------
+       
 
         ContextEvaluationResult evaluation =
                 contextEvaluator.evaluate(
@@ -89,20 +84,13 @@ public class RagService {
                 evaluation.getReason()
         );
 
-        // --------------------------------------------------
-        // 3. Prepare web search variables
-        // --------------------------------------------------
-
+        
         List<WebSearchResult> webResults =
                 List.of();
 
         String webContext = "";
 
-        // --------------------------------------------------
-        // 4. If PDF context is insufficient,
-        //    search the web
-        // --------------------------------------------------
-
+       
         if (!evaluation.isSufficient()) {
 
             log.info(
@@ -138,9 +126,6 @@ public class RagService {
             }
         }
 
-        // --------------------------------------------------
-        // 5. Build PDF context
-        // --------------------------------------------------
 
         StringBuilder context =
                 new StringBuilder();
@@ -181,9 +166,7 @@ public class RagService {
                 webResults.size()
         );
 
-        // --------------------------------------------------
-        // 6. Build source list
-        // --------------------------------------------------
+       
 
         List<SourceResult> sources =
                 new ArrayList<>();
@@ -199,15 +182,10 @@ public class RagService {
             );
         }
 
-        // --------------------------------------------------
-        // 7. Send sources to frontend
-        // --------------------------------------------------
-
+        
         onSources.accept(sources);
 
-        // --------------------------------------------------
-        // 8. Build Gemini prompt
-        // --------------------------------------------------
+       
 
         String prompt = """
                 You are DocuMind AI, an intelligent document
@@ -269,9 +247,7 @@ public class RagService {
                 question
         );
 
-        // --------------------------------------------------
-        // 9. Get all Gemini models
-        // --------------------------------------------------
+        
 
         List<StreamingChatModel> models =
                 geminiModelService.getModels();
@@ -281,9 +257,7 @@ public class RagService {
                 models.size()
         );
 
-        // --------------------------------------------------
-        // 10. Try Gemini models
-        // --------------------------------------------------
+        
 
         streamWithFallback(
                 models,
@@ -296,9 +270,7 @@ public class RagService {
         );
     }
 
-    // ======================================================
-    // Gemini fallback + retry
-    // ======================================================
+   
 
     private void streamWithFallback(
             List<StreamingChatModel> models,
@@ -309,9 +281,7 @@ public class RagService {
             Consumer<Throwable> onError,
             Runnable onComplete) {
 
-        // --------------------------------------------------
-        // No more Gemini models
-        // --------------------------------------------------
+      
 
         if (modelIndex >= models.size()) {
 
@@ -381,11 +351,7 @@ public class RagService {
                                 message
                         );
 
-                        // ------------------------------------------
-                        // If Gemini already sent tokens,
-                        // do not retry because retrying could
-                        // duplicate part of the answer.
-                        // ------------------------------------------
+                     
 
                         if (responseStarted.get()) {
 
@@ -399,9 +365,7 @@ public class RagService {
                             return;
                         }
 
-                        // ------------------------------------------
-                        // 503 = temporary service overload
-                        // ------------------------------------------
+                      
 
                         if (is503Error(message)) {
 
@@ -463,10 +427,7 @@ public class RagService {
                             return;
                         }
 
-                        // ------------------------------------------
-                        // 429 = quota / rate limit
-                        // ------------------------------------------
-
+                       
                         if (is429Error(message)) {
 
                             log.warn(
@@ -489,9 +450,7 @@ public class RagService {
                             return;
                         }
 
-                        // ------------------------------------------
-                        // 401 / 403 = authentication/permission
-                        // ------------------------------------------
+                      
 
                         if (isAuthenticationError(message)) {
 
@@ -516,9 +475,7 @@ public class RagService {
                             return;
                         }
 
-                        // ------------------------------------------
-                        // Other errors
-                        // ------------------------------------------
+                    
 
                         log.error(
                                 "Non-retryable Gemini error "
@@ -532,20 +489,12 @@ public class RagService {
         );
     }
 
-    // ======================================================
-    // Detect 503
-    // ======================================================
-
     private boolean is503Error(String message) {
 
         return message.contains("503")
                || message.contains("UNAVAILABLE")
                || message.contains("high demand");
     }
-
-    // ======================================================
-    // Detect 429
-    // ======================================================
 
     private boolean is429Error(String message) {
 
@@ -554,10 +503,6 @@ public class RagService {
                || message.contains("quota")
                || message.contains("rate limit");
     }
-
-    // ======================================================
-    // Detect authentication errors
-    // ======================================================
 
     private boolean isAuthenticationError(
             String message) {

@@ -13,7 +13,7 @@ public class GeminiConfig {
     @Bean
     public ChatModel chatModel() {
         return GoogleAiGeminiChatModel.builder()
-                .apiKey(System.getenv("GEMINI_API_KEY1"))
+                .apiKey(System.getenv("GEMINI_API_KEY"))
                 .modelName("gemini-3.6-flash")
                 .build();
     }
@@ -21,7 +21,7 @@ public class GeminiConfig {
     @Bean
     public StreamingChatModel streamingChatModel() {
         return GoogleAiGeminiStreamingChatModel.builder()
-                .apiKey(System.getenv("GEMINI_API_KEY1"))
+                .apiKey(System.getenv("GEMINI_API_KEY"))
                 .modelName("gemini-3.6-flash")
                 .build();
     }
