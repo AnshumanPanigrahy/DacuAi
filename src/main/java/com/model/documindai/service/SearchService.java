@@ -16,6 +16,8 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import dev.langchain4j.store.embedding.filter.Filter;
+import dev.langchain4j.store.embedding.filter.MetadataFilterBuilder;
 
 @Service
 public class SearchService {
@@ -24,8 +26,9 @@ public class SearchService {
     private final EmbeddingStore<TextSegment> embeddingStore;
     private final DocumentChunkRepository documentChunkRepository;
 
-    private static final double SIMILARITY_THRESHOLD = 0.80;
-    private static final int CANDIDATE_COUNT = 10;
+    private static final double SIMILARITY_THRESHOLD = 0.60;
+    private static final int CANDIDATE_COUNT = 100;
+    private static final int CONTEXT_RADIUS = 2;
     private static final int FINAL_RESULT_COUNT = 5;
 
     public SearchService(
@@ -40,11 +43,11 @@ public class SearchService {
 
     public List<SearchResult> search(String query) {
 
-        // 1. Convert question into embedding
+        
         Embedding queryEmbedding =
                 embeddingModel.embed(query).content();
 
-        // 2. Retrieve more candidates
+        
         EmbeddingSearchRequest request =
                 EmbeddingSearchRequest.builder()
                         .queryEmbedding(queryEmbedding)
@@ -54,12 +57,13 @@ public class SearchService {
         List<EmbeddingMatch<TextSegment>> matches =
                 embeddingStore.search(request).matches();
 
-
-        List<SearchResult> semanticResults = new ArrayList<>();
+        
+        List<SearchResult> semanticResults =
+                new ArrayList<>();
 
         for (EmbeddingMatch<TextSegment> match : matches) {
 
-            // Remove weak semantic matches
+            
             if (match.score() < SIMILARITY_THRESHOLD) {
                 continue;
             }
@@ -81,12 +85,13 @@ public class SearchService {
                             documentId,
                             chunkId,
                             chunkNumber,
-                            segment.text()
+                            segment.text(),
+                            "SEMANTIC"
                     )
             );
         }
 
-
+  
         semanticResults.sort(
                 Comparator.comparingDouble(
                         SearchResult::getScore
@@ -97,16 +102,14 @@ public class SearchService {
             return List.of();
         }
 
-
+        
         List<SearchResult> contextualResults =
                 buildRelevantContext(semanticResults);
 
-
-        List<SearchResult> finalResults =
+        
+        List<SearchResult> uniqueResults =
                 removeDuplicates(contextualResults);
-
-
-        return finalResults.stream()
+        return uniqueResults.stream()
                 .limit(FINAL_RESULT_COUNT)
                 .toList();
     }
@@ -114,75 +117,75 @@ public class SearchService {
     private List<SearchResult> buildRelevantContext(
             List<SearchResult> semanticResults) {
 
-        SearchResult strongest =
-                semanticResults.get(0);
+        List<SearchResult> finalResults = new ArrayList<>();
 
-        try {
+       
+        int semanticLimit = Math.min(3, semanticResults.size());
 
-            Long documentId =
-                    Long.parseLong(strongest.getDocumentId());
+        for (int i = 0; i < semanticLimit; i++) {
 
-            int center =
-                    Integer.parseInt(
-                            strongest.getChunkNumber()
-                    );
+            SearchResult semanticResult =
+                    semanticResults.get(i);
 
-            List<DocumentChunk> region =
-                    documentChunkRepository
-                            .findByDocumentIdAndChunkNumberBetween(
-                                    documentId,
-                                    Math.max(1, center - 2),
-                                    center + 2
-                            );
+            try {
 
-            List<SearchResult> finalResults =
-                    new ArrayList<>();
-
-            for (DocumentChunk chunk : region) {
-
-                double score =
-                        findOriginalScore(
-                                semanticResults,
-                                chunk
+                Long documentId =
+                        Long.parseLong(
+                                semanticResult.getDocumentId()
                         );
 
-                if (score == 0.0) {
-                    score = strongest.getScore() * 0.95;
+                int center =
+                        Integer.parseInt(
+                                semanticResult.getChunkNumber()
+                        );
+
+                List<DocumentChunk> region =
+                        documentChunkRepository
+                                .findByDocumentIdAndChunkNumberBetween(
+                                        documentId,
+                                        Math.max(
+                                                1,
+                                                center - CONTEXT_RADIUS
+                                        ),
+                                        center + CONTEXT_RADIUS
+                                );
+
+                for (DocumentChunk chunk : region) {
+
+                    double score =
+                            findOriginalScore(
+                                    semanticResults,
+                                    chunk
+                            );
+
+                    String retrievalType =
+                            score > 0.0
+                                    ? "SEMANTIC"
+                                    : "CONTEXT";
+
+                    finalResults.add(
+                            new SearchResult(
+                                    score,
+                                    String.valueOf(documentId),
+                                    String.valueOf(chunk.getId()),
+                                    String.valueOf(
+                                            chunk.getChunkNumber()
+                                    ),
+                                    chunk.getChunkText(),
+                                    retrievalType
+                            )
+                    );
                 }
 
-                finalResults.add(
-                        new SearchResult(
-                                score,
-                                String.valueOf(documentId),
-                                String.valueOf(chunk.getId()),
-                                String.valueOf(
-                                        chunk.getChunkNumber()
-                                ),
-                                chunk.getChunkText()
-                        )
+            } catch (NumberFormatException e) {
+
+                System.out.println(
+                        "Invalid document/chunk metadata"
                 );
             }
-
-            finalResults.sort(
-                    Comparator.comparingInt(
-                            result -> Integer.parseInt(
-                                    result.getChunkNumber()
-                            )
-                    )
-            );
-
-            return finalResults;
-
-        } catch (NumberFormatException e) {
-
-            System.out.print(
-                    "Invalid document/chunk metadata"
-            );
-
-            return semanticResults.stream()
-                    .limit(FINAL_RESULT_COUNT)
-                    .toList();
         }
+
+        return finalResults;
     }
 
     private double findOriginalScore(
@@ -209,11 +212,14 @@ public class SearchService {
 
         for (SearchResult result : results) {
 
-            boolean duplicate = uniqueResults.stream()
-                    .anyMatch(existing ->
-                            existing.getChunkId()
-                                    .equals(result.getChunkId())
-                    );
+            boolean duplicate =
+                    uniqueResults.stream()
+                            .anyMatch(existing ->
+                                    existing.getChunkId()
+                                            .equals(
+                                                    result.getChunkId()
+                                            )
+                            );
 
             if (!duplicate) {
                 uniqueResults.add(result);
@@ -221,5 +227,74 @@ public class SearchService {
         }
 
         return uniqueResults;
+    }
+    public List<SearchResult> searchByDocument(
+            String query,
+            Long documentId) {
+
+        Embedding queryEmbedding =
+                embeddingModel.embed(query).content();
+
+        Filter documentFilter =
+                MetadataFilterBuilder
+                        .metadataKey("documentId")
+                        .isEqualTo(documentId);
+
+        EmbeddingSearchRequest request =
+                EmbeddingSearchRequest.builder()
+                        .queryEmbedding(queryEmbedding)
+                        .filter(documentFilter)
+                        .maxResults(CANDIDATE_COUNT)
+                        .build();
+
+        List<EmbeddingMatch<TextSegment>> matches =
+                embeddingStore.search(request).matches();
+
+        List<SearchResult> semanticResults =
+                new ArrayList<>();
+
+        for (EmbeddingMatch<TextSegment> match : matches) {
+
+            if (match.score() < SIMILARITY_THRESHOLD) {
+                continue;
+            }
+
+            TextSegment segment = match.embedded();
+
+            String chunkId =
+                    segment.metadata().getString("chunkId");
+
+            String chunkNumber =
+                    segment.metadata().getString("chunkNumber");
+
+            semanticResults.add(
+                    new SearchResult(
+                            match.score(),
+                            String.valueOf(documentId),
+                            chunkId,
+                            chunkNumber,
+                            segment.text(),
+                            "SEMANTIC"
+                    )
+            );
+        }
+
+        semanticResults.sort(
+                Comparator.comparingDouble(
+                        SearchResult::getScore
+                ).reversed()
+        );
+
+        if (semanticResults.isEmpty()) {
+            return List.of();
+        }
+
+        List<SearchResult> contextualResults =
+                buildRelevantContext(semanticResults);
+
+        return removeDuplicates(contextualResults)
+                .stream()
+                .limit(FINAL_RESULT_COUNT)
+                .toList();
     }
 }

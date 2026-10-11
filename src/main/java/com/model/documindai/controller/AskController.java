@@ -1,7 +1,9 @@
 package com.model.documindai.controller;
 
 import com.model.documindai.model.AskRequest;
+import com.model.documindai.model.WebSearchResponse;
 import com.model.documindai.service.RagService;
+import com.model.documindai.service.WebSearchService;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -10,9 +12,14 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 public class AskController {
 
     private final RagService ragService;
+    private final WebSearchService webSearchService;
 
-    public AskController(RagService ragService) {
+    public AskController(
+            RagService ragService,
+            WebSearchService webSearchService) {
+
         this.ragService = ragService;
+        this.webSearchService = webSearchService;
     }
 
     @PostMapping("/ask")
@@ -58,5 +65,11 @@ public class AskController {
         );
 
         return emitter;
+    }
+    @GetMapping("/web-search")
+    public WebSearchResponse webSearch(
+            @RequestParam String query) {
+
+        return webSearchService.search(query);
     }
 }

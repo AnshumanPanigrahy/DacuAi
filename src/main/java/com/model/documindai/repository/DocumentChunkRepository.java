@@ -17,4 +17,6 @@ public interface DocumentChunkRepository
             int startChunk,
             int endChunk
     );
+
+    long countByDocument_Id(Long documentId);
 }

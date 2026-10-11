@@ -1,27 +1,53 @@
 package com.model.documindai.service;
 
+import com.model.documindai.model.ContextEvaluationResult;
 import com.model.documindai.model.SearchResult;
 import com.model.documindai.model.SourceResult;
+import com.model.documindai.model.WebSearchResponse;
+import com.model.documindai.model.WebSearchResult;
+
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 @Service
 public class RagService {
 
+    private static final Logger log =
+            LoggerFactory.getLogger(RagService.class);
+
+    private static final int MAX_503_RETRIES = 2;
+
     private final SearchService searchService;
-    private final StreamingChatModel streamingChatModel;
+    private final GeminiModelService geminiModelService;
+    private final ContextEvaluator contextEvaluator;
+    private final WebSearchService webSearchService;
+    private final WebResultEvaluator webResultEvaluator;
+    private final WebContextBuilder webContextBuilder;
 
     public RagService(
             SearchService searchService,
-            StreamingChatModel streamingChatModel) {
+            GeminiModelService geminiModelService,
+            ContextEvaluator contextEvaluator,
+            WebSearchService webSearchService,
+            WebResultEvaluator webResultEvaluator,
+            WebContextBuilder webContextBuilder) {
 
         this.searchService = searchService;
-        this.streamingChatModel = streamingChatModel;
+        this.geminiModelService = geminiModelService;
+        this.contextEvaluator = contextEvaluator;
+        this.webSearchService = webSearchService;
+        this.webResultEvaluator = webResultEvaluator;
+        this.webContextBuilder = webContextBuilder;
     }
 
     public void streamAnswer(
@@ -31,33 +57,74 @@ public class RagService {
             Consumer<Throwable> onError,
             Runnable onComplete) {
 
+
         List<SearchResult> results =
                 searchService.search(question);
 
-        if (results.isEmpty()) {
+       
 
-            onToken.accept(
-                    "I could not find relevant information in the provided documents."
+        ContextEvaluationResult evaluation =
+                contextEvaluator.evaluate(
+                        question,
+                        results
+                );
+
+        log.info(
+                "Context sufficient: {}",
+                evaluation.isSufficient()
+        );
+
+        log.info(
+                "Context score: {}",
+                evaluation.getScore()
+        );
+
+        log.info(
+                "Context reason: {}",
+                evaluation.getReason()
+        );
+
+        
+        List<WebSearchResult> webResults =
+                List.of();
+
+        String webContext = "";
+
+       
+        if (!evaluation.isSufficient()) {
+
+            log.info(
+                    "PDF context insufficient. Searching web..."
             );
 
-            onSources.accept(List.of());
+            try {
 
-            onComplete.run();
+                WebSearchResponse webResponse =
+                        webSearchService.search(question);
 
-            return;
+                webResults =
+                        webResultEvaluator.filter(
+                                webResponse.getResults()
+                        );
+
+                webContext =
+                        webContextBuilder.build(
+                                webResults
+                        );
+
+                log.info(
+                        "Filtered web results: {}",
+                        webResults.size()
+                );
+
+            } catch (Exception e) {
+
+                log.error(
+                        "Web search failed",
+                        e
+                );
+            }
         }
-
-
-        List<SourceResult> sources = results.stream()
-                .map(result -> new SourceResult(
-                        result.getDocumentId(),
-                        result.getChunkId(),
-                        result.getChunkNumber()
-                ))
-                .toList();
-
-
-        onSources.accept(sources);
 
 
         StringBuilder context =
@@ -73,37 +140,101 @@ public class RagService {
                     .append(result.getChunkNumber())
                     .append("\n");
 
+            context.append("Retrieval Type: ")
+                    .append(result.getRetrievalType())
+                    .append("\n");
+
             context.append("Content:\n")
                     .append(result.getText())
-                    .append("\n\n---\n\n");
+                    .append("\n\n");
+
+            context.append("---\n\n");
         }
 
-        System.out.print(
-                "Context characters: "
-                        + context.length()
+        log.info(
+                "Context characters: {}",
+                context.length()
         );
 
-        System.out.print(
-                "Chunks sent to Gemini: "
-                        + results.size()
+        log.info(
+                "PDF chunks sent to Gemini: {}",
+                results.size()
         );
 
+        log.info(
+                "Web sources sent to Gemini: {}",
+                webResults.size()
+        );
+
+       
+
+        List<SourceResult> sources =
+                new ArrayList<>();
+
+        for (SearchResult result : results) {
+
+            sources.add(
+                    new SourceResult(
+                            result.getDocumentId(),
+                            result.getChunkId(),
+                            result.getChunkNumber()
+                    )
+            );
+        }
+
+        
+        onSources.accept(sources);
+
+       
 
         String prompt = """
-                You are DocuMind AI, a document question-answering assistant.
+                You are DocuMind AI, an intelligent document
+                retrieval and question-answering assistant.
 
-                Answer the user's question using ONLY the provided context.
+                Answer the user's question using ONLY the
+                provided sources.
 
-                Rules:
-                - Do not invent information.
-                - Do not use outside knowledge.
-                - Analyze all relevant chunks together.
-                - Combine information from multiple chunks when necessary.
-                - If the answer is not present in the context, say:
-                  "I could not find the answer in the provided documents."
-                - Give a clear and concise answer.
+                SOURCE RULES:
 
-                CONTEXT:
+                1. PDF sources come from the user's uploaded
+                   documents.
+
+                2. Web sources come from external web search.
+
+                3. Do not invent information.
+
+                4. Do not use outside knowledge that is not
+                   contained in the provided sources.
+
+                5. If PDF and web sources provide complementary
+                   information, combine them carefully.
+
+                6. If sources disagree, explicitly mention
+                   the disagreement.
+
+                7. Do not assume that two web sources referring
+                   to the same name represent the same person
+                   or entity.
+
+                8. Search relevance scores are NOT probabilities
+                   of truth.
+
+                9. Prefer information that is consistently
+                   supported by multiple reliable sources.
+
+                10. If the provided sources do not contain
+                    enough information to answer the question,
+                    say:
+
+                    "I could not find enough reliable information
+                    in the available sources."
+
+                11. Give a clear and concise answer.
+
+                PDF CONTEXT:
+                %s
+
+                WEB CONTEXT:
                 %s
 
                 USER QUESTION:
@@ -112,10 +243,73 @@ public class RagService {
                 ANSWER:
                 """.formatted(
                 context,
+                webContext,
                 question
         );
 
-        streamingChatModel.chat(
+        
+
+        List<StreamingChatModel> models =
+                geminiModelService.getModels();
+
+        log.info(
+                "Available Gemini models: {}",
+                models.size()
+        );
+
+        
+
+        streamWithFallback(
+                models,
+                0,
+                0,
+                prompt,
+                onToken,
+                onError,
+                onComplete
+        );
+    }
+
+   
+
+    private void streamWithFallback(
+            List<StreamingChatModel> models,
+            int modelIndex,
+            int retryAttempt,
+            String prompt,
+            Consumer<String> onToken,
+            Consumer<Throwable> onError,
+            Runnable onComplete) {
+
+      
+
+        if (modelIndex >= models.size()) {
+
+            log.error(
+                    "All Gemini API keys failed."
+            );
+
+            onError.accept(
+                    new RuntimeException(
+                            "All Gemini API keys failed."
+                    )
+            );
+
+            return;
+        }
+
+        StreamingChatModel model =
+                models.get(modelIndex);
+
+        log.info(
+                "Trying Gemini API key: {}",
+                modelIndex + 1
+        );
+
+        AtomicBoolean responseStarted =
+                new AtomicBoolean(false);
+
+        model.chat(
                 prompt,
                 new StreamingChatResponseHandler() {
 
@@ -123,12 +317,21 @@ public class RagService {
                     public void onPartialResponse(
                             String partialResponse) {
 
-                        onToken.accept(partialResponse);
+                        responseStarted.set(true);
+
+                        onToken.accept(
+                                partialResponse
+                        );
                     }
 
                     @Override
                     public void onCompleteResponse(
                             ChatResponse completeResponse) {
+
+                        log.info(
+                                "Gemini API key {} succeeded.",
+                                modelIndex + 1
+                        );
 
                         onComplete.run();
                     }
@@ -137,9 +340,191 @@ public class RagService {
                     public void onError(
                             Throwable error) {
 
+                        String message =
+                                error.getMessage() == null
+                                        ? ""
+                                        : error.getMessage();
+
+                        log.error(
+                                "Gemini API key {} failed: {}",
+                                modelIndex + 1,
+                                message
+                        );
+
+                     
+
+                        if (responseStarted.get()) {
+
+                            log.error(
+                                    "Gemini failed after response "
+                                    + "streaming had already started."
+                            );
+
+                            onError.accept(error);
+
+                            return;
+                        }
+
+                      
+
+                        if (is503Error(message)) {
+
+                            if (retryAttempt
+                                < MAX_503_RETRIES) {
+
+                                int nextAttempt =
+                                        retryAttempt + 1;
+
+                                long delay =
+                                        2000L
+                                        * (1L
+                                           << retryAttempt);
+
+                                log.warn(
+                                        "Gemini returned 503. "
+                                        + "Retrying key {} "
+                                        + "in {} ms "
+                                        + "(attempt {}/{})",
+                                        modelIndex + 1,
+                                        delay,
+                                        nextAttempt,
+                                        MAX_503_RETRIES
+                                );
+
+                                sleep(delay);
+
+                                streamWithFallback(
+                                        models,
+                                        modelIndex,
+                                        nextAttempt,
+                                        prompt,
+                                        onToken,
+                                        onError,
+                                        onComplete
+                                );
+
+                                return;
+                            }
+
+                            log.warn(
+                                    "Gemini key {} still unavailable "
+                                    + "after {} retries. "
+                                    + "Trying next key.",
+                                    modelIndex + 1,
+                                    MAX_503_RETRIES
+                            );
+
+                            streamWithFallback(
+                                    models,
+                                    modelIndex + 1,
+                                    0,
+                                    prompt,
+                                    onToken,
+                                    onError,
+                                    onComplete
+                            );
+
+                            return;
+                        }
+
+                       
+                        if (is429Error(message)) {
+
+                            log.warn(
+                                    "Gemini key {} reached a "
+                                    + "rate/quota limit. "
+                                    + "Trying next key.",
+                                    modelIndex + 1
+                            );
+
+                            streamWithFallback(
+                                    models,
+                                    modelIndex + 1,
+                                    0,
+                                    prompt,
+                                    onToken,
+                                    onError,
+                                    onComplete
+                            );
+
+                            return;
+                        }
+
+                      
+
+                        if (isAuthenticationError(message)) {
+
+                            log.warn(
+                                    "Gemini key {} appears to have "
+                                    + "an authentication or "
+                                    + "permission problem. "
+                                    + "Trying next key.",
+                                    modelIndex + 1
+                            );
+
+                            streamWithFallback(
+                                    models,
+                                    modelIndex + 1,
+                                    0,
+                                    prompt,
+                                    onToken,
+                                    onError,
+                                    onComplete
+                            );
+
+                            return;
+                        }
+
+                    
+
+                        log.error(
+                                "Non-retryable Gemini error "
+                                + "on key {}.",
+                                modelIndex + 1
+                        );
+
                         onError.accept(error);
                     }
                 }
         );
+    }
+
+    private boolean is503Error(String message) {
+
+        return message.contains("503")
+               || message.contains("UNAVAILABLE")
+               || message.contains("high demand");
+    }
+
+    private boolean is429Error(String message) {
+
+        return message.contains("429")
+               || message.contains("RESOURCE_EXHAUSTED")
+               || message.contains("quota")
+               || message.contains("rate limit");
+    }
+
+    private boolean isAuthenticationError(
+            String message) {
+
+        return message.contains("401")
+               || message.contains("403")
+               || message.contains("UNAUTHENTICATED")
+               || message.contains("PERMISSION_DENIED");
+    }
+    private void sleep(long milliseconds) {
+
+        try {
+
+            Thread.sleep(milliseconds);
+
+        } catch (InterruptedException e) {
+
+            Thread.currentThread().interrupt();
+
+            log.warn(
+                    "Gemini retry interrupted."
+            );
+        }
     }
 }
