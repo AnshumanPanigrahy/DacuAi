@@ -4,6 +4,9 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.util.LinkedHashSet;
+import java.util.Set;
+
 @Getter
 @Setter
 @Entity
@@ -23,6 +26,17 @@ public class DocumentChunk {
     @ManyToOne
     @JoinColumn(name = "document_id")
     private Document document;
+
+    @ElementCollection
+    @CollectionTable(
+            name = "document_chunk_pages",
+            joinColumns = @JoinColumn(name = "document_chunk_id"),
+            uniqueConstraints = @UniqueConstraint(
+                    columnNames = {"document_chunk_id", "page_number"}
+            )
+    )
+    @Column(name = "page_number", nullable = false)
+    private Set<Integer> pageNumbers = new LinkedHashSet<>();
 
 
     public DocumentChunk() {

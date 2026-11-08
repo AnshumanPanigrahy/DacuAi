@@ -26,6 +26,9 @@ public class Document {
     @Column(name = "upload_time")
     private LocalDateTime uploadTime;
 
+    @Column(name = "pdf_storage_key")
+    private String pdfStorageKey;
+
     @OneToMany(mappedBy = "document", cascade = CascadeType.ALL)
     private List<DocumentChunk> chunks;
 

@@ -8,4 +8,6 @@ import lombok.Setter;
 public class AskRequest {
 
     private String question;
+
+    private Long documentId;
 }

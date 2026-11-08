@@ -21,6 +21,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -68,15 +72,13 @@ public class PdfController {
 
             String text = pages.stream()
                     .map(ExtractedPage::text)
-                    .filter(pageText -> pageText != null)
-                    .collect(Collectors.joining());
+                    .filter(pageText ->
+                            pageText != null && !pageText.isBlank())
+                    .collect(Collectors.joining("\n"));
 
             List<String> chunks;
+            List<PageAwareChunk> pageAwareChunks = null;
 
-            /*
-             * If PDFBox could not extract enough text,
-             * use OCR.
-             */
             if (text == null || text.trim().length() < 50) {
 
                 System.out.println(
@@ -96,10 +98,6 @@ public class PdfController {
                         );
                     }
 
-                    System.out.println(
-                            "Gemini document extraction successful."
-                    );
-
                     chunks = textChunkService.splitText(
                             text,
                             500
@@ -112,10 +110,11 @@ public class PdfController {
                     List<ExtractedPage> ocrPages =
                             pdfOcrService.extractPages(pdfBytes);
 
-                    chunks = textChunkService.splitPages(
-                                    ocrPages,
-                                    500
-                            )
+                    pageAwareChunks = textChunkService.splitPages(
+                            ocrPages,
+                            500
+                    );
+                    chunks = pageAwareChunks
                             .stream()
                             .map(PageAwareChunk::text)
                             .toList();
@@ -123,14 +122,11 @@ public class PdfController {
 
             } else {
 
-                System.out.println(
-                        "Text detected. Using normal PDF extraction."
+                pageAwareChunks = textChunkService.splitPages(
+                        pages,
+                        500
                 );
-
-                chunks = textChunkService.splitPages(
-                                pages,
-                                500
-                        )
+                chunks = pageAwareChunks
                         .stream()
                         .map(PageAwareChunk::text)
                         .toList();
@@ -148,17 +144,25 @@ public class PdfController {
              * Save document.
              */
             Document savedDocument =
-                    documentService.saveDocument(
-                            file.getOriginalFilename()
+                    documentService.saveDocumentWithPdf(
+                            file.getOriginalFilename(),
+                            pdfBytes
                     );
 
             /*
              * Save chunks + embeddings.
              */
-            documentService.saveChunks(
-                    savedDocument,
-                    chunks
-            );
+            if (pageAwareChunks == null) {
+                documentService.saveChunks(
+                        savedDocument,
+                        chunks
+                );
+            } else {
+                documentService.savePageAwareChunks(
+                        savedDocument,
+                        pageAwareChunks
+                );
+            }
 
             return chunks;
 
@@ -211,6 +215,28 @@ public class PdfController {
             @PathVariable Long id) {
 
         return documentService.getDocumentById(id);
+    }
+
+    @GetMapping(
+            value = "/document/{id}/file",
+            produces = MediaType.APPLICATION_PDF_VALUE
+    )
+    public ResponseEntity<byte[]> getDocumentFile(
+            @PathVariable Long id) {
+
+        byte[] pdfBytes = documentService.getOriginalPdf(id);
+        String safeFilename = "document-" + id + ".pdf";
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .header(
+                        HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.inline()
+                                .filename(safeFilename)
+                                .build()
+                                .toString()
+                )
+                .body(pdfBytes);
     }
 
     @GetMapping("/statistics")
