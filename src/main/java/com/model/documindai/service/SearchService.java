@@ -15,10 +15,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.Map;
 import java.util.List;
-import java.util.Objects;
-import java.util.stream.Collectors;
 import dev.langchain4j.store.embedding.filter.Filter;
 import dev.langchain4j.store.embedding.filter.MetadataFilterBuilder;
 
@@ -105,8 +102,6 @@ public class SearchService {
             return List.of();
         }
 
-        semanticResults = loadPageNumbers(semanticResults);
-
         // 5. Add neighboring chunks for context
         List<SearchResult> contextualResults =
                 buildRelevantContext(semanticResults);
@@ -182,8 +177,7 @@ public class SearchService {
                                             chunk.getChunkNumber()
                                     ),
                                     chunk.getChunkText(),
-                                    retrievalType,
-                                    sortedPageNumbers(chunk)
+                                    retrievalType
                             )
                     );
                 }
@@ -213,58 +207,6 @@ public class SearchService {
         }
 
         return 0.0;
-    }
-
-    private List<SearchResult> loadPageNumbers(
-            List<SearchResult> semanticResults) {
-
-        List<Long> chunkIds = semanticResults.stream()
-                .map(SearchResult::getChunkId)
-                .filter(Objects::nonNull)
-                .map(this::parseChunkId)
-                .filter(Objects::nonNull)
-                .distinct()
-                .toList();
-
-        if (chunkIds.isEmpty()) {
-            return semanticResults;
-        }
-
-        Map<Long, List<Integer>> pagesByChunkId =
-                documentChunkRepository.findByIdIn(chunkIds).stream()
-                        .collect(Collectors.toMap(
-                                DocumentChunk::getId,
-                                this::sortedPageNumbers
-                        ));
-
-        return semanticResults.stream()
-                .map(result -> new SearchResult(
-                        result.getScore(),
-                        result.getDocumentId(),
-                        result.getChunkId(),
-                        result.getChunkNumber(),
-                        result.getText(),
-                        result.getRetrievalType(),
-                        pagesByChunkId.getOrDefault(
-                                parseChunkId(result.getChunkId()),
-                                List.of()
-                        )
-                ))
-                .toList();
-    }
-
-    private Long parseChunkId(String chunkId) {
-        try {
-            return Long.valueOf(chunkId);
-        } catch (NumberFormatException | NullPointerException e) {
-            return null;
-        }
-    }
-
-    private List<Integer> sortedPageNumbers(DocumentChunk chunk) {
-        return chunk.getPageNumbers().stream()
-                .sorted()
-                .toList();
     }
 
     private List<SearchResult> removeDuplicates(
@@ -351,8 +293,6 @@ public class SearchService {
         if (semanticResults.isEmpty()) {
             return List.of();
         }
-
-        semanticResults = loadPageNumbers(semanticResults);
 
         List<SearchResult> contextualResults =
                 buildRelevantContext(semanticResults);

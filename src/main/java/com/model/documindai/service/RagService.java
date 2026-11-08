@@ -16,10 +16,8 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
-import java.util.function.BooleanSupplier;
 
 @Service
 public class RagService {
@@ -35,7 +33,6 @@ public class RagService {
     private final WebSearchService webSearchService;
     private final WebResultEvaluator webResultEvaluator;
     private final WebContextBuilder webContextBuilder;
-    private final DocumentSummaryService documentSummaryService;
 
     public RagService(
             SearchService searchService,
@@ -43,8 +40,7 @@ public class RagService {
             ContextEvaluator contextEvaluator,
             WebSearchService webSearchService,
             WebResultEvaluator webResultEvaluator,
-            WebContextBuilder webContextBuilder,
-            DocumentSummaryService documentSummaryService) {
+            WebContextBuilder webContextBuilder) {
 
         this.searchService = searchService;
         this.geminiModelService = geminiModelService;
@@ -52,66 +48,21 @@ public class RagService {
         this.webSearchService = webSearchService;
         this.webResultEvaluator = webResultEvaluator;
         this.webContextBuilder = webContextBuilder;
-        this.documentSummaryService = documentSummaryService;
     }
 
     public void streamAnswer(
             String question,
-            Long documentId,
             Consumer<String> onToken,
             Consumer<List<SourceResult>> onSources,
             Consumer<Throwable> onError,
             Runnable onComplete) {
-        streamAnswer(
-                question,
-                documentId,
-                onToken,
-                onSources,
-                onError,
-                onComplete,
-                () -> false
-        );
-    }
-
-    public void streamAnswer(
-            String question,
-            Long documentId,
-            Consumer<String> onToken,
-            Consumer<List<SourceResult>> onSources,
-            Consumer<Throwable> onError,
-            Runnable onComplete,
-            BooleanSupplier cancelled) {
-
-        if (SummaryIntentDetector.isSummaryRequest(question)) {
-            if (documentId == null) {
-                onError.accept(new IllegalArgumentException(
-                        "A document must be selected before requesting a summary."
-                ));
-                return;
-            }
-
-            documentSummaryService.streamSummary(
-                    documentId,
-                    onToken,
-                    onSources,
-                    onError,
-                    onComplete,
-                    cancelled
-            );
-            return;
-        }
 
         // --------------------------------------------------
         // 1. Search uploaded PDF documents
         // --------------------------------------------------
 
         List<SearchResult> results =
-                documentId == null
-                        ? searchService.search(question)
-                        : searchService.searchByDocument(
-                                question,
-                                documentId
-                        );
+                searchService.search(question);
 
         // --------------------------------------------------
         // 2. Evaluate PDF context
@@ -152,7 +103,7 @@ public class RagService {
         //    search the web
         // --------------------------------------------------
 
-        if (documentId == null && !evaluation.isSufficient()) {
+        if (!evaluation.isSufficient()) {
 
             log.info(
                     "PDF context insufficient. Searching web..."
@@ -243,8 +194,7 @@ public class RagService {
                     new SourceResult(
                             result.getDocumentId(),
                             result.getChunkId(),
-                            result.getChunkNumber(),
-                            result.getPageNumbers()
+                            result.getChunkNumber()
                     )
             );
         }
@@ -265,8 +215,6 @@ public class RagService {
 
                 Answer the user's question using ONLY the
                 provided sources.
-
-                %s
 
                 SOURCE RULES:
 
@@ -316,10 +264,6 @@ public class RagService {
 
                 ANSWER:
                 """.formatted(
-                documentId == null
-                        ? ""
-                        : "The user selected one PDF. Use only that PDF; "
-                          + "do not use web knowledge or other documents.",
                 context,
                 webContext,
                 question
@@ -345,7 +289,6 @@ public class RagService {
                 models,
                 0,
                 0,
-                null,
                 prompt,
                 onToken,
                 onError,
@@ -361,7 +304,6 @@ public class RagService {
             List<StreamingChatModel> models,
             int modelIndex,
             int retryAttempt,
-            Throwable lastError,
             String prompt,
             Consumer<String> onToken,
             Consumer<Throwable> onError,
@@ -374,17 +316,12 @@ public class RagService {
         if (modelIndex >= models.size()) {
 
             log.error(
-                    "All Gemini API key attempts failed. "
-                    + "Last failure: {}.",
-                    describeError(lastError)
+                    "All Gemini API keys failed."
             );
 
             onError.accept(
                     new RuntimeException(
-                            "All Gemini API keys failed. "
-                            + "Last failure: "
-                            + describeError(lastError),
-                            lastError
+                            "All Gemini API keys failed."
                     )
             );
 
@@ -395,7 +332,7 @@ public class RagService {
                 models.get(modelIndex);
 
         log.info(
-                "Trying Gemini API key attempt {}.",
+                "Trying Gemini API key: {}",
                 modelIndex + 1
         );
 
@@ -422,7 +359,7 @@ public class RagService {
                             ChatResponse completeResponse) {
 
                         log.info(
-                                "Gemini API key attempt {} succeeded.",
+                                "Gemini API key {} succeeded.",
                                 modelIndex + 1
                         );
 
@@ -433,10 +370,15 @@ public class RagService {
                     public void onError(
                             Throwable error) {
 
+                        String message =
+                                error.getMessage() == null
+                                        ? ""
+                                        : error.getMessage();
+
                         log.error(
-                                "Gemini API key attempt {} failed: {}.",
+                                "Gemini API key {} failed: {}",
                                 modelIndex + 1,
-                                describeError(error)
+                                message
                         );
 
                         // ------------------------------------------
@@ -449,8 +391,7 @@ public class RagService {
 
                             log.error(
                                     "Gemini failed after response "
-                                    + "streaming had already started: {}.",
-                                    describeError(error)
+                                    + "streaming had already started."
                             );
 
                             onError.accept(error);
@@ -462,7 +403,7 @@ public class RagService {
                         // 503 = temporary service overload
                         // ------------------------------------------
 
-                        if (is503Error(error)) {
+                        if (is503Error(message)) {
 
                             if (retryAttempt
                                 < MAX_503_RETRIES) {
@@ -492,7 +433,6 @@ public class RagService {
                                         models,
                                         modelIndex,
                                         nextAttempt,
-                                        error,
                                         prompt,
                                         onToken,
                                         onError,
@@ -514,7 +454,6 @@ public class RagService {
                                     models,
                                     modelIndex + 1,
                                     0,
-                                    error,
                                     prompt,
                                     onToken,
                                     onError,
@@ -528,7 +467,7 @@ public class RagService {
                         // 429 = quota / rate limit
                         // ------------------------------------------
 
-                        if (is429Error(error)) {
+                        if (is429Error(message)) {
 
                             log.warn(
                                     "Gemini key {} reached a "
@@ -541,7 +480,6 @@ public class RagService {
                                     models,
                                     modelIndex + 1,
                                     0,
-                                    error,
                                     prompt,
                                     onToken,
                                     onError,
@@ -555,7 +493,7 @@ public class RagService {
                         // 401 / 403 = authentication/permission
                         // ------------------------------------------
 
-                        if (isAuthenticationError(error)) {
+                        if (isAuthenticationError(message)) {
 
                             log.warn(
                                     "Gemini key {} appears to have "
@@ -569,7 +507,6 @@ public class RagService {
                                     models,
                                     modelIndex + 1,
                                     0,
-                                    error,
                                     prompt,
                                     onToken,
                                     onError,
@@ -584,10 +521,9 @@ public class RagService {
                         // ------------------------------------------
 
                         log.error(
-                                "Non-retryable Gemini error on key "
-                                + "attempt {}: {}.",
-                                modelIndex + 1,
-                                describeError(error)
+                                "Non-retryable Gemini error "
+                                + "on key {}.",
+                                modelIndex + 1
                         );
 
                         onError.accept(error);
@@ -600,112 +536,37 @@ public class RagService {
     // Detect 503
     // ======================================================
 
-    private boolean is503Error(Throwable error) {
+    private boolean is503Error(String message) {
 
-        return containsErrorText(
-                error,
-                "503",
-                "UNAVAILABLE",
-                "high demand"
-        );
+        return message.contains("503")
+               || message.contains("UNAVAILABLE")
+               || message.contains("high demand");
     }
 
     // ======================================================
     // Detect 429
     // ======================================================
 
-    private boolean is429Error(Throwable error) {
+    private boolean is429Error(String message) {
 
-        return containsErrorText(
-                error,
-                "429",
-                "RESOURCE_EXHAUSTED",
-                "quota",
-                "rate limit"
-        );
+        return message.contains("429")
+               || message.contains("RESOURCE_EXHAUSTED")
+               || message.contains("quota")
+               || message.contains("rate limit");
     }
 
     // ======================================================
     // Detect authentication errors
     // ======================================================
 
-    private boolean isAuthenticationError(Throwable error) {
+    private boolean isAuthenticationError(
+            String message) {
 
-        return containsErrorText(
-                error,
-                "401",
-                "403",
-                "UNAUTHENTICATED",
-                "PERMISSION_DENIED"
-        );
+        return message.contains("401")
+               || message.contains("403")
+               || message.contains("UNAUTHENTICATED")
+               || message.contains("PERMISSION_DENIED");
     }
-
-    private boolean containsErrorText(
-            Throwable error,
-            String... indicators) {
-
-        for (Throwable cause = error;
-             cause != null;
-             cause = cause.getCause()) {
-
-            String message = cause.getMessage();
-
-            if (message == null) {
-                continue;
-            }
-
-            String normalized =
-                    message.toLowerCase(Locale.ROOT);
-
-            for (String indicator : indicators) {
-
-                if (normalized.contains(
-                        indicator.toLowerCase(Locale.ROOT))) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    private String describeError(Throwable error) {
-
-        if (error == null) {
-            return "no underlying exception available";
-        }
-
-        String exceptionType =
-                error.getClass().getSimpleName();
-
-        if (is503Error(error)) {
-            return "HTTP 503/service unavailable ("
-                   + exceptionType + ")";
-        }
-
-        if (is429Error(error)) {
-            return "HTTP 429/rate or quota limit ("
-                   + exceptionType + ")";
-        }
-
-        if (containsErrorText(error, "401", "UNAUTHENTICATED")) {
-            return "HTTP 401/authentication failure ("
-                   + exceptionType + ")";
-        }
-
-        if (containsErrorText(error, "403", "PERMISSION_DENIED")) {
-            return "HTTP 403/permission failure ("
-                   + exceptionType + ")";
-        }
-
-        if (isAuthenticationError(error)) {
-            return "authentication/permission failure ("
-                   + exceptionType + ")";
-        }
-
-        return "unclassified (" + exceptionType + ")";
-    }
-
     private void sleep(long milliseconds) {
 
         try {
